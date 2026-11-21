@@ -1,0 +1,48 @@
+name: INCC diário
+
+# A FGV publica o INCC em datas diferentes ao longo do mês (INCC-DI ~dia 10, INCC-10 ~dia 20,
+# INCC-M ~fim do mês), por isso o robô confere todo dia e só avisa quando entra mês novo ou revisão.
+on:
+  schedule:
+    - cron: "15 12 * * *"   # todo dia às 09:15 (horário de Brasília)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Baixar INCC do Ipeadata
+        run: python scripts/atualizar_incc.py
+
+      - name: Salvar no repositório
+        if: always()
+        run: |
+          git config user.name "robo-incc"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add dados/
+          if git diff --cached --quiet; then echo "Nada novo."; else
+            git commit -m "INCC: atualização automática $(date -u +%Y-%m-%d)"; git push; fi
+
+      - name: Avisar por e-mail (issue)
+        if: always() && hashFiles('saida/novidades.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue create --title "$(cat saida/titulo.txt)" --body-file saida/novidades.md --assignee engmiltonjose
+
+      - name: Avisar falha inesperada
+        if: failure() && hashFiles('saida/novidades.md') == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --assignee engmiltonjose --title "❌ Robô do INCC falhou antes do relatório" --body "Veja o log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}. Nada a fazer por enquanto — ele tenta de novo amanhã."
